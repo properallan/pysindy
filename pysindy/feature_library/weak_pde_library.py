@@ -13,6 +13,7 @@ from ..utils import AxesArray
 from .base import BaseFeatureLibrary
 from .base import x_sequence_or_item
 from pysindy.differentiation import FiniteDifference
+from ..utils import comprehend_axes
 
 
 class WeakPDELibrary(BaseFeatureLibrary):
@@ -826,6 +827,53 @@ class WeakPDELibrary(BaseFeatureLibrary):
         self.get_feature_names()
 
         return self
+
+    @x_sequence_or_item
+    def transform_weak_prediction(self, x_full):
+        """Transform data to custom features
+
+        Parameters
+        ----------
+        x : array-like, shape (n_samples, n_features)
+            The data to transform, row by row.
+
+        Returns
+        -------
+        xp : np.ndarray, shape (n_samples, n_output_features)
+            The matrix of features, where n_output_features is the number of features
+            generated from applying the custom functions to the inputs.
+        """
+        check_is_fitted(self)
+
+        xp_full = []
+        for x in x_full:
+            n_features = x.shape[x.ax_coord]
+
+            if float(__version__[:3]) >= 1.0:
+                n_input_features = self.n_features_in_
+            else:
+                n_input_features = self.n_input_features_
+
+            if n_features != n_input_features:
+                raise ValueError("x shape does not match training shape")
+
+            xp = np.empty((*x.shape[:-1], self.n_output_features_), dtype=x.dtype)
+            library_idx = 0
+            if self.include_bias:
+                xp[..., library_idx] = np.ones(x.shape[:-1])
+                library_idx += 1
+            for f in self.functions:
+                for c in self._combinations(
+                    n_input_features, f.__code__.co_argcount, self.interaction_only
+                ):
+                    xp[..., library_idx] = f(*[x[..., j] for j in c])
+                    library_idx += 1
+
+            xp = AxesArray(xp, comprehend_axes(xp))
+            xp_full.append(xp)
+        if self.library_ensemble:
+            xp_full = self._ensemble(xp_full)
+        return xp_full
 
     @x_sequence_or_item
     def transform(self, x_full):
